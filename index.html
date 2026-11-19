@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <meta name="description" content="Browser-only LiDAR workstation: PotreeConverter, PCL and PDAL compiled to WebAssembly. No server, no upload." />
+    <!-- Enables cross-origin isolation (SharedArrayBuffer, pthreads) on static hosts like GitHub Pages. -->
+    <script src="./coi-serviceworker.js"></script>
+    <title>everything-pointcloud</title>
+    <script type="module" crossorigin src="/everything-pointcloud-demo/assets/index-2sbR5PoD.js"></script>
+    <link rel="modulepreload" crossorigin href="/everything-pointcloud-demo/assets/three.core-uGF9U9y7.js">
+    <link rel="stylesheet" crossorigin href="/everything-pointcloud-demo/assets/index-Bw5YyIJQ.css">
+  </head>
+  <body>
+    <!-- Full-screen 3D canvas -->
+    <div id="viewer"></div>
+
+    <!-- Top bar -->
+    <header id="topbar">
+      <div class="topbar-left">
+        <span class="brand">everything-pointcloud</span>
+        <label class="file-btn">
+          <input id="potree-file" type="file" accept=".las,.laz" />
+          Open LAS
+        </label>
+        <label class="file-btn file-btn-secondary">
+          <input id="ops-file" type="file" accept=".pcd,.xyz,.pts,.txt" />
+          Open PCD/XYZ
+        </label>
+        <button id="load-sample" class="file-btn file-btn-secondary" type="button" title="Open a real LiDAR scan (Manhattan, a rainforest, the Grand Canyon...) — converted entirely in your browser">
+          Try a sample
+        </button>
+      </div>
+      <div class="topbar-right">
+        <label class="scope-select" title="Which points an operation runs on: everything on screen at its current level of detail, or every point of the cloud (read straight from the octree on disk)">
+          <span>Process</span>
+          <select id="process-scope">
+            <option value="cloud">Whole cloud</option>
+            <option value="view">Points in view</option>
+          </select>
+        </label>
+        <span id="app-status" class="status-badge">Idle</span>
+        <span id="potree-stats" class="status-badge stats-badge" style="display:none">
+          <span id="potree-visible-points">0</span> pts
+          <span class="divider">|</span>
+          <span id="potree-progress">0%</span>
+        </span>
+      </div>
+    </header>
+
+    <!-- Floating Potree controls panel -->
+    <aside id="potree-panel" class="floating-panel" data-hidden>
+      <div class="panel-grip" data-panel="potree-panel">Render</div>
+      <div class="panel-body">
+        <div class="ctrl-row">
+          <label>Budget
+            <input id="potree-budget" type="range" min="100000" max="10000000" step="100000" value="2000000" />
+          </label>
+          <span id="potree-budget-label" class="ctrl-value">2M</span>
+        </div>
+        <div class="ctrl-row">
+          <label>Renderer
+            <select id="potree-render-mode">
+              <option value="standard" selected>Standard</option>
+              <option value="hq-splat">HQ Splat</option>
+            </select>
+          </label>
+          <label>Size <input id="potree-point-size" type="number" min="0.1" max="10" step="0.1" value="1.5" /></label>
+          <label>Mode
+            <select id="potree-point-size-mode">
+              <option value="2" selected>Adaptive</option>
+              <option value="0">Fixed</option>
+              <option value="1">Attenuated</option>
+            </select>
+          </label>
+          <label>Color
+            <select id="potree-color-type">
+              <option value="0" selected>RGB</option>
+              <option value="3">Height</option>
+              <option value="4">Intensity</option>
+              <option value="8">Class</option>
+              <option value="6">LOD</option>
+            </select>
+          </label>
+          <label>Shape
+            <select id="potree-shape">
+              <option value="1" selected>Circle</option>
+              <option value="0">Square</option>
+              <option value="2">Paraboloid</option>
+            </select>
+          </label>
+        </div>
+        <div class="ctrl-row">
+          <label class="toggle">
+            <input id="potree-edl" type="checkbox" checked /> EDL
+          </label>
+          <label>Str <input id="potree-edl-strength" type="number" min="0" max="5" step="0.1" value="1.0" /></label>
+          <label>Rad <input id="potree-edl-radius" type="number" min="0.1" max="5" step="0.1" value="1.4" /></label>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Floating Ops panel (shown when PCD/XYZ loaded) -->
+    <aside id="ops-panel" class="floating-panel" data-hidden>
+      <div class="panel-grip" data-panel="ops-panel">Operations</div>
+      <div class="panel-body">
+        <div class="ctrl-row">
+          <button id="load-cloud" class="btn">Load</button>
+          <button id="reset-cloud" class="btn btn-dim">Reset</button>
+        </div>
+        <div id="cloud-summary" class="summary-row"></div>
+        <div class="ctrl-row">
+          <label>Leaf <input id="leaf-size" type="number" min="0.001" step="0.005" value="0.05" /></label>
+          <button id="apply-voxel" class="btn btn-dim">Voxel</button>
+        </div>
+        <div class="ctrl-row">
+          <label>Axis
+            <select id="passthrough-axis">
+              <option value="x">X</option><option value="y">Y</option><option value="z" selected>Z</option>
+            </select>
+          </label>
+          <label>Min <input id="passthrough-min" type="number" value="-2" step="0.1" /></label>
+          <label>Max <input id="passthrough-max" type="number" value="2" step="0.1" /></label>
+          <button id="apply-passthrough" class="btn btn-dim">Filter</button>
+        </div>
+        <div class="ctrl-row">
+          <label>Dist <input id="segment-distance" type="number" min="0.001" step="0.005" value="0.03" /></label>
+          <label>Iter <input id="segment-iterations" type="number" min="10" step="10" value="120" /></label>
+          <button id="apply-segmentation" class="btn">Segment</button>
+        </div>
+        <div id="segment-summary" class="summary-row"></div>
+      </div>
+    </aside>
+
+    <!-- Floating log (collapsed by default) -->
+    <aside id="log-panel" class="floating-panel log-floating" data-hidden data-collapsed>
+      <div class="panel-grip" data-panel="log-panel" role="button" tabindex="0" aria-expanded="false" title="Show the full log">Log</div>
+      <pre id="potree-log" class="log-body"></pre>
+    </aside>
+
+    <!-- Toolbar + tool windows are created programmatically by main.ts -->
+    <div id="toolbar-root"></div>
+    <div id="panels-root"></div>
+
+  </body>
+</html>
